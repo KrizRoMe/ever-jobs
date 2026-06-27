@@ -41,6 +41,7 @@ import { ManatalModule } from './source-ats-manatal';
 import { MercorModule } from './source-ats-mercor';
 import { OracleModule } from './source-ats-oracle';
 import { PaylocityModule } from './source-ats-paylocity';
+import { WorkAtAStartupModule } from './source-ats-workatastartup';
 import { PersonioModule } from './source-ats-personio';
 import { PhenomModule } from './source-ats-phenom';
 import { EightfoldModule } from './source-ats-eightfold';
@@ -421,6 +422,7 @@ import { IndeedModule } from './source-indeed';
 import { InfoJobsModule } from './source-infojobs';
 import { IosdevjobsModule } from './source-iosdevjobs';
 import { JobDataApiModule } from './source-jobdataapi';
+import { JsonLdModule } from './source-jsonld';
 import { JobicyModule } from './source-jobicy';
 import { JobindexModule } from './source-jobindex';
 import { JobsAcUkModule } from './source-jobsacuk';
@@ -553,6 +555,7 @@ import { AmtechsoftwareModule } from './source-company-amtechsoftware';
 import { AmwellModule } from './source-company-amwell';
 import { AmylyxModule } from './source-company-amylyx';
 import { AnaplanModule } from './source-company-anaplan';
+import { AnatarModule } from './source-company-anatar';
 import { AnchantoModule } from './source-company-anchanto';
 import { AnimalmedicalcenterModule } from './source-company-animalmedicalcenter';
 import { AninebingModule } from './source-company-aninebing';
@@ -927,6 +930,22 @@ import { PivotBioModule } from './source-company-pivotbio';
 import { SambaNovaSystemsModule } from './source-company-sambanovasystems';
 import { SlingshotAerospaceModule } from './source-company-slingshotaerospace';
 import { SoundAgricultureModule } from './source-company-soundagriculture';
+import { AIRCOMPANYModule } from './source-company-aircompany';
+import { ArborEnergyModule } from './source-company-arborenergy';
+import { AuroraInnovationModule } from './source-company-aurorainnovation';
+import { EarnInModule } from './source-company-earnin';
+import { FaradayFutureModule } from './source-company-faradayfuture';
+import { FastSpringModule } from './source-company-fastspring';
+import { GravityRDModule } from './source-company-gravity';
+import { RunwiseModule } from './source-company-runwise';
+import { SESAIModule } from './source-company-sesai';
+import { SolarisModule } from './source-company-solarisbank';
+import { StackAVModule } from './source-company-stackav';
+import { TastytradeModule } from './source-company-tastytrade';
+import { TorcRoboticsModule } from './source-company-torcrobotics';
+import { UrsaMajorModule } from './source-company-ursamajor';
+import { ViaModule } from './source-company-via';
+import { ZuoraModule } from './source-company-zuora';
 export const ALL_SOURCE_MODULES = [
   FourDayWeekModule,
   AcademiccareersModule,
@@ -939,6 +958,7 @@ export const ALL_SOURCE_MODULES = [
   AvatureModule,
   BambooHRModule,
   BreezyHRModule,
+  JsonLdModule,
   BullhornModule,
   ComeetModule,
   CrelateModule,
@@ -962,6 +982,7 @@ export const ALL_SOURCE_MODULES = [
   MercorModule,
   OracleModule,
   PaylocityModule,
+  WorkAtAStartupModule,
   PersonioModule,
   PhenomModule,
   EightfoldModule,
@@ -1473,6 +1494,7 @@ export const ALL_SOURCE_MODULES = [
   AmwellModule,
   AmylyxModule,
   AnaplanModule,
+  AnatarModule,
   AnchantoModule,
   AnimalmedicalcenterModule,
   AninebingModule,
@@ -1847,4 +1869,20 @@ export const ALL_SOURCE_MODULES = [
   SambaNovaSystemsModule,
   SlingshotAerospaceModule,
   SoundAgricultureModule,
+  AIRCOMPANYModule,
+  ArborEnergyModule,
+  AuroraInnovationModule,
+  EarnInModule,
+  FaradayFutureModule,
+  FastSpringModule,
+  GravityRDModule,
+  RunwiseModule,
+  SESAIModule,
+  SolarisModule,
+  StackAVModule,
+  TastytradeModule,
+  TorcRoboticsModule,
+  UrsaMajorModule,
+  ViaModule,
+  ZuoraModule,
 ];

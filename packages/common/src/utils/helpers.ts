@@ -1,7 +1,9 @@
 import {
+  CompensationDto,
   CompensationInterval,
   Country,
   JobType,
+  getCompensationInterval,
   getJobTypeFromString,
 } from '@ever-jobs/models';
 
@@ -853,6 +855,131 @@ export function extractSalary(
   }
 
   return result;
+}
+
+/**
+ * Map an {@link extractSalary} result envelope to a {@link CompensationDto}.
+ *
+ * Spec 5018 — single source of truth for the `ExtractSalaryResult →
+ * CompensationDto` shape that ATS plugins previously hand-rolled (workday,
+ * breezyhr, bamboohr, rippling). Returns `null` when the parse yielded no
+ * bounded amount, so a "no salary in text" result never produces an empty
+ * compensation object. The pay-period string is normalised through
+ * {@link getCompensationInterval}; `currency` is passed through verbatim
+ * (`CompensationDto` defaults a missing currency to `'USD'`), preserving the
+ * pre-refactor behaviour byte-for-byte.
+ */
+export function compensationFromSalary(
+  parsed: ExtractSalaryResult,
+): CompensationDto | null {
+  if (parsed.minAmount == null && parsed.maxAmount == null) return null;
+
+  const interval = parsed.interval
+    ? getCompensationInterval(parsed.interval)
+    : null;
+
+  return new CompensationDto({
+    interval: interval ?? undefined,
+    minAmount: parsed.minAmount ?? undefined,
+    maxAmount: parsed.maxAmount ?? undefined,
+    currency: parsed.currency ?? undefined,
+  });
+}
+
+/**
+ * Parse a free-text salary string straight into a {@link CompensationDto}.
+ *
+ * Spec 5018 — convenience wrapper combining {@link extractSalary} and
+ * {@link compensationFromSalary}. This is the "description fallback" half of
+ * the structured-first compensation pattern: callers run it on free-form body
+ * text when their structured source is absent. Returns `null` for empty input
+ * or any text without a recognisable salary range (no throws).
+ */
+export function salaryToCompensation(
+  text: string | null | undefined,
+  options?: ExtractSalaryOptions,
+): CompensationDto | null {
+  if (!text || !text.trim()) return null;
+  return compensationFromSalary(extractSalary(text, options));
+}
+
+/**
+ * Resolve compensation with the structured-first, text-fallback precedence.
+ *
+ * Spec 5018 — the canonical rule (discovered with Rippling): prefer a
+ * structured compensation object parsed from the ATS payload; only when that
+ * is absent, fall back to parsing the free-text description via
+ * {@link salaryToCompensation}. Centralising this here keeps every ATS plugin
+ * on the same precedence and mapping, so a future fix lands once.
+ */
+export function resolveCompensation(args: {
+  structured?: CompensationDto | null;
+  text?: string | null;
+  options?: ExtractSalaryOptions;
+}): CompensationDto | null {
+  return (
+    args.structured ?? salaryToCompensation(args.text ?? null, args.options)
+  );
+}
+
+/**
+ * A single bounded compensation range, e.g. one geo/level/work-mode tier from
+ * an ATS payload. At least one of `minAmount` / `maxAmount` should be set for
+ * the range to contribute to the aggregate.
+ */
+export interface CompensationRange {
+  minAmount?: number | null;
+  maxAmount?: number | null;
+  currency?: string | null;
+  interval?: CompensationInterval | null;
+}
+
+/**
+ * Fold many compensation ranges (e.g. per-location or per-level tiers) into a
+ * single overall min–max envelope: `minAmount = min(all floors)`,
+ * `maxAmount = max(all ceilings)`.
+ *
+ * Spec 5019 — single source of truth for the multi-tier collapse that Rippling
+ * discovered (`payRangeDetails[]` → `Math.min(starts)…Math.max(ends)`). ATS
+ * plugins that expose several pay bands (rippling, ashby tiers) call this so a
+ * posting with SF/NYC/remote tiers reports the true overall band instead of an
+ * arbitrary first tier.
+ *
+ * Mixed units are never averaged together: the **first bounded range** sets the
+ * basis currency + interval, and only ranges sharing that currency and interval
+ * contribute to the fold (so a stray EUR or hourly band can't pollute a USD
+ * yearly aggregate). Returns `null` when no range carries a bounded amount.
+ */
+export function aggregateCompensation(
+  ranges: ReadonlyArray<CompensationRange | null | undefined>,
+): CompensationDto | null {
+  const bounded = ranges.filter(
+    (range): range is CompensationRange =>
+      range != null &&
+      (range.minAmount != null || range.maxAmount != null),
+  );
+  if (bounded.length === 0) return null;
+
+  const basis = bounded[0];
+  const sameUnit = bounded.filter(
+    (range) =>
+      (range.currency ?? null) === (basis.currency ?? null) &&
+      (range.interval ?? null) === (basis.interval ?? null),
+  );
+
+  const mins = sameUnit
+    .map((range) => range.minAmount)
+    .filter((value): value is number => value != null);
+  const maxes = sameUnit
+    .map((range) => range.maxAmount)
+    .filter((value): value is number => value != null);
+
+  return new CompensationDto({
+    interval: basis.interval ?? undefined,
+    minAmount: mins.length > 0 ? Math.min(...mins) : undefined,
+    maxAmount: maxes.length > 0 ? Math.max(...maxes) : undefined,
+    currency: basis.currency ?? undefined,
+  });
 }
 
 /**

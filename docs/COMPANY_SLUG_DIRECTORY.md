@@ -2,7 +2,7 @@
 
 > A curated list of verified company slugs organized by ATS platform. Use these with the `companySlug` parameter to search jobs at specific companies.
 
-**Last Updated:** 2026-06-04
+**Last Updated:** 2026-06-27
 
 ---
 
@@ -130,6 +130,22 @@ Greenhouse slugs are the subdomain used in `boards.greenhouse.io/{slug}`.
 | Caribou Financial | `caribou` | Fintech / Lending |
 | HealthJoy | `healthjoy` | Health-tech / Benefits |
 | Papa | `papa` | Health-tech / Care |
+| AIR COMPANY | `aircompany` | Climate Tech / Carbon Conversion & Synthetic Fuels |
+| Arbor Energy | `arborenergy` | Climate Tech / Carbon-Negative Power (BECCS) |
+| Aurora Innovation | `aurorainnovation` | Autonomous Vehicles / Self-Driving Trucking |
+| EarnIn | `earnin` | Fintech / Earned-Wage Access |
+| Faraday Future | `faradayfuture` | Automotive / Electric Vehicles |
+| FastSpring | `fastspring` | Fintech / Merchant-of-Record Commerce & Subscription Billing |
+| Gravity R&D | `gravity` | AdTech / Recommendation & Personalization Software |
+| Runwise | `runwise` | Climate Tech / Smart Building Energy Management |
+| SES AI | `sesai` | Battery Technology / EV Energy Storage (Li-Metal) |
+| Solaris | `solarisbank` | Fintech / Banking-as-a-Service (Embedded Finance) |
+| Stack AV | `stackav` | Autonomous Vehicles / Self-Driving Trucking |
+| tastytrade | `tastytrade` | Fintech / Online Brokerage (Options & Futures Trading) |
+| Torc Robotics | `torcrobotics` | Autonomous Vehicles / Self-Driving Trucking |
+| Ursa Major | `ursamajor` | Aerospace & Defense / Rocket Propulsion |
+| Via | `via` | TransitTech / Mobility Software (SaaS + Operations) |
+| Zuora | `zuora` | Enterprise SaaS / Subscription Billing & Quote-to-Cash |
 
 ---
 

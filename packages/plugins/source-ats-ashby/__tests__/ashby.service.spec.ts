@@ -145,6 +145,37 @@ describe('AshbyService — Spec 719', () => {
         'Unlisted Ghost Role',
       );
     });
+
+    it('normalizes duplicate primary and secondary locations through the shared parser', async () => {
+      const raw = clone(BOARD_RAW) as any;
+      raw.jobs[0].location = 'Mountain View, CA';
+      raw.jobs[0].address = null;
+      raw.jobs[0].isRemote = false;
+      raw.jobs[0].secondaryLocations = [
+        { location: 'Mountain View, California, United States' },
+        { location: 'Seattle, WA' },
+        { location: 'Seattle, WA, United States' },
+        { location: 'Remote' },
+        { location: 'United States' },
+      ];
+      mockGet.mockResolvedValueOnce({ data: raw });
+
+      const service = new AshbyService();
+      const result = await service.scrape({
+        siteType: [Site.ASHBY],
+        companySlug: SLUG,
+      } as ScraperInputDto);
+
+      const job = result.jobs.find(
+        (j) => j.id === `ashby-${BOARD_RAW.jobs[0].id}`,
+      );
+      expect(job?.location).toMatchObject({
+        city: 'Mountain View, CA; Seattle, WA',
+        country: 'United States',
+      });
+      expect(job?.isRemote).toBe(true);
+      expect(job?.workFromHomeType).toBe('Remote');
+    });
   });
 
   describe('compensation mapping', () => {
@@ -218,6 +249,172 @@ describe('AshbyService — Spec 719', () => {
       );
       expect(job).toBeDefined();
       expect(job?.compensation ?? null).toBeNull();
+    });
+
+    it('falls back to the description salary when structured comp is absent (Spec 5018)', async () => {
+      const raw = clone(BOARD_RAW) as any;
+      raw.jobs[2].descriptionPlain =
+        'Compensation: $120,000 - $160,000 per year plus benefits.';
+      mockGet.mockResolvedValueOnce({ data: raw });
+
+      const service = new AshbyService();
+      const result = await service.scrape({
+        siteType: [Site.ASHBY],
+        companySlug: SLUG,
+      } as ScraperInputDto);
+
+      const job = result.jobs.find(
+        (j) => j.id === `ashby-${BOARD_RAW.jobs[2].id}`,
+      );
+      expect(job?.compensation?.minAmount).toBe(120000);
+      expect(job?.compensation?.maxAmount).toBe(160000);
+      expect(job?.compensation?.currency).toBe('USD');
+    });
+
+    it('folds many tiers into the overall min-max envelope (Spec 5019)', async () => {
+      const raw = clone(BOARD_RAW) as any;
+      // SF / NYC / remote bands on the same base-salary component.
+      raw.jobs[0].compensation.compensationComponents[0].tiers = [
+        { title: 'SF', tierFloor: 180000, tierCeiling: 220000, currency: 'USD', tierType: 'salary', interval: 'YEAR' },
+        { title: 'NYC', tierFloor: 170000, tierCeiling: 210000, currency: 'USD', tierType: 'salary', interval: 'YEAR' },
+        { title: 'Remote', tierFloor: 150000, tierCeiling: 190000, currency: 'USD', tierType: 'salary', interval: 'YEAR' },
+      ];
+      mockGet.mockResolvedValueOnce({ data: raw });
+
+      const service = new AshbyService();
+      const result = await service.scrape({
+        siteType: [Site.ASHBY],
+        companySlug: SLUG,
+      } as ScraperInputDto);
+
+      const job = result.jobs.find(
+        (j) => j.id === `ashby-${BOARD_RAW.jobs[0].id}`,
+      );
+      expect(job?.compensation?.minAmount).toBe(150000);
+      expect(job?.compensation?.maxAmount).toBe(220000);
+      expect(job?.compensation?.currency).toBe('USD');
+      expect(job?.compensation?.interval).toBe(CompensationInterval.YEARLY);
+    });
+
+    it('folds many flat salary bands into the overall min-max envelope (Spec 5019)', async () => {
+      const raw = clone(BOARD_RAW) as any;
+      // Multiple per-location salary bands plus an equity row that must stay out.
+      raw.jobs[1].compensation.summaryComponents = [
+        { compensationType: 'Salary', interval: '1 YEAR', currencyCode: 'USD', minValue: 200000, maxValue: 260000 },
+        { compensationType: 'Salary', interval: '1 YEAR', currencyCode: 'USD', minValue: 180000, maxValue: 240000 },
+        { compensationType: 'Salary', interval: '1 YEAR', currencyCode: 'USD', minValue: 160000, maxValue: 300000 },
+        { compensationType: 'EquityPercentage', interval: 'NONE', currencyCode: null, minValue: null, maxValue: null },
+      ];
+      raw.jobs[1].compensation.compensationTiers = [];
+      mockGet.mockResolvedValueOnce({ data: raw });
+
+      const service = new AshbyService();
+      const result = await service.scrape({
+        siteType: [Site.ASHBY],
+        companySlug: SLUG,
+      } as ScraperInputDto);
+
+      const job = result.jobs.find(
+        (j) => j.id === `ashby-${BOARD_RAW.jobs[1].id}`,
+      );
+      expect(job?.compensation?.minAmount).toBe(160000);
+      expect(job?.compensation?.maxAmount).toBe(300000);
+      expect(job?.compensation?.currency).toBe('USD');
+      expect(job?.compensation?.interval).toBe(CompensationInterval.YEARLY);
+    });
+
+    it('prefers structured comp over a description salary (Spec 5018)', async () => {
+      const raw = clone(BOARD_RAW) as any;
+      raw.jobs[0].descriptionPlain =
+        'Body says $10,000 - $20,000 per year but structured wins.';
+      mockGet.mockResolvedValueOnce({ data: raw });
+
+      const service = new AshbyService();
+      const result = await service.scrape({
+        siteType: [Site.ASHBY],
+        companySlug: SLUG,
+      } as ScraperInputDto);
+
+      const job = result.jobs.find(
+        (j) => j.id === `ashby-${BOARD_RAW.jobs[0].id}`,
+      );
+      expect(job?.compensation?.minAmount).toBe(150000);
+      expect(job?.compensation?.maxAmount).toBe(190000);
+    });
+  });
+
+  /**
+   * Spec 5008 — the public job-board API and the authenticated Posting API use
+   * different names for the same fields. The plugin must read both, preferring
+   * the public name.
+   */
+  describe('field-name fallbacks (Spec 5008)', () => {
+    it('maps the authenticated-API field names (departmentName/teamName/publishedDate)', async () => {
+      mockGet.mockResolvedValueOnce({ data: clone(BOARD_RAW) });
+      const service = new AshbyService();
+      const result = await service.scrape({
+        siteType: [Site.ASHBY],
+        companySlug: SLUG,
+      } as ScraperInputDto);
+
+      const job = result.jobs.find(
+        (j) => j.id === `ashby-${BOARD_RAW.jobs[0].id}`,
+      );
+      expect(job?.department).toBe('Engineering');
+      expect(job?.team).toBe('Platform');
+      expect(job?.datePosted).toBe('2026-05-20');
+    });
+
+    it('maps the public job-board field names (department/team/publishedAt)', async () => {
+      const raw = clone(BOARD_RAW) as any;
+      const j = raw.jobs[0];
+      delete j.departmentName;
+      delete j.teamName;
+      delete j.publishedDate;
+      j.department = 'Hardware';
+      j.team = 'Avionics';
+      j.publishedAt = '2026-06-04T22:28:52.477+00:00';
+      mockGet.mockResolvedValueOnce({ data: raw });
+
+      const service = new AshbyService();
+      const result = await service.scrape({
+        siteType: [Site.ASHBY],
+        companySlug: SLUG,
+      } as ScraperInputDto);
+
+      const job = result.jobs.find(
+        (jb) => jb.id === `ashby-${BOARD_RAW.jobs[0].id}`,
+      );
+      expect(job?.department).toBe('Hardware');
+      expect(job?.team).toBe('Avionics');
+      // publishedAt is an ISO timestamp; datePosted is the date part only.
+      expect(job?.datePosted).toBe('2026-06-04');
+    });
+
+    it('prefers the public names when both are present', async () => {
+      const raw = clone(BOARD_RAW) as any;
+      const j = raw.jobs[0];
+      j.department = 'Hardware';
+      j.team = 'Avionics';
+      j.publishedAt = '2026-06-04T00:00:00.000+00:00';
+      // Authenticated-name values remain but must lose to the public ones.
+      j.departmentName = 'Engineering';
+      j.teamName = 'Platform';
+      j.publishedDate = '2026-05-20';
+      mockGet.mockResolvedValueOnce({ data: raw });
+
+      const service = new AshbyService();
+      const result = await service.scrape({
+        siteType: [Site.ASHBY],
+        companySlug: SLUG,
+      } as ScraperInputDto);
+
+      const job = result.jobs.find(
+        (jb) => jb.id === `ashby-${BOARD_RAW.jobs[0].id}`,
+      );
+      expect(job?.department).toBe('Hardware');
+      expect(job?.team).toBe('Avionics');
+      expect(job?.datePosted).toBe('2026-06-04');
     });
   });
 

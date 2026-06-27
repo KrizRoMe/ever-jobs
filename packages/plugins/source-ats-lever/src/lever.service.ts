@@ -7,14 +7,19 @@ import {
   JobResponseDto,
   JobPostDto,
   LocationDto,
+  CompensationDto,
+  CompensationInterval,
   Site,
-  DescriptionFormat,
+  getCompensationInterval,
 } from '@ever-jobs/models';
 import {
   createHttpClient,
   htmlToPlainText,
   extractEmails,
+  parseLocationList,
+  regionNameFromCode,
   randomSleep,
+  resolveCompensation,
 } from '@ever-jobs/common';
 import { LEVER_API_URL, LEVER_HEADERS, LEVER_DELAY_MS } from './lever.constants';
 import { LeverJob } from './lever.types';
@@ -80,7 +85,7 @@ export class LeverService implements IScraper {
         if (jobPosts.length >= resultsWanted) break;
 
         try {
-          const post = this.processJob(job, companySlug, input.descriptionFormat);
+          const post = this.processJob(job, companySlug);
           if (post) {
             jobPosts.push(post);
           }
@@ -143,7 +148,7 @@ export class LeverService implements IScraper {
       if (jobPosts.length >= resultsWanted) break;
 
       try {
-        const post = this.processApiJob(job, companySlug, input.descriptionFormat);
+        const post = this.processApiJob(job, companySlug);
         if (post) {
           jobPosts.push(post);
         }
@@ -162,60 +167,43 @@ export class LeverService implements IScraper {
    * The authenticated API may return additional fields such as tags and
    * content list blocks that are not available from the public endpoint.
    */
-  private processApiJob(
-    job: LeverJob,
-    companySlug: string,
-    format?: DescriptionFormat,
-  ): JobPostDto | null {
-    const title = job.text;
-    if (!title) return null;
+  private processApiJob(job: LeverJob, companySlug: string): JobPostDto | null {
+    if (!job.text) return null;
+    return this.buildJobPost(job, companySlug);
+  }
 
-    // Build description from available fields
-    let description =
-      job.descriptionPlain ?? job.descriptionBodyPlain ?? null;
+  private processJob(job: LeverJob, companySlug: string): JobPostDto | null {
+    if (!job.text) return null;
+    return this.buildJobPost(job, companySlug);
+  }
 
-    if (!description && (job.description || job.descriptionBody)) {
-      const html = job.description ?? job.descriptionBody ?? '';
-      description = htmlToPlainText(html);
-    }
+  /**
+   * Map a Lever posting to a JobPostDto. Shared by the public and authenticated
+   * paths, which return the same posting shape from the same endpoint.
+   */
+  private buildJobPost(job: LeverJob, companySlug: string): JobPostDto {
+    const title = job.text as string;
+    const description = this.buildDescription(job);
 
-    // Append list/content blocks (available in authenticated responses)
-    if (job.lists && job.lists.length > 0) {
-      const listContent = job.lists
-        .map((l) => {
-          const heading = l.text ? `${l.text}\n` : '';
-          const body = htmlToPlainText(l.content);
-          return `${heading}${body}`;
-        })
-        .join('\n\n');
-      description = description
-        ? `${description}\n\n${listContent}`
-        : listContent;
-    }
+    // Location: prefer the multi-entry `allLocations`, fall back to the single
+    // `categories.location`, and normalize through the shared parser (handles
+    // `City, ST` splitting, multi-site `; `-joining, and remote/hybrid hints).
+    const parsedLocations = parseLocationList(this.locationLabels(job));
+    const location = this.applyCountry(parsedLocations.location, job.country);
 
-    // Append additional/opening info if present
-    const additional = job.additionalPlain ?? null;
-    if (additional && description) {
-      description = `${description}\n\n${additional}`;
-    }
-
-    // Location from categories
-    const locationStr = job.categories?.location ?? null;
-    const location = locationStr
-      ? new LocationDto({ city: locationStr })
-      : null;
-
-    // Determine remote status
+    // Remote status: trust the explicit workplaceType flag, otherwise fall back
+    // to text mentioned in the location labels.
     const isRemote =
       job.workplaceType?.toLowerCase() === 'remote' ||
-      locationStr?.toLowerCase().includes('remote') ||
+      parsedLocations.remoteMentioned ||
       false;
 
-    // Employment type from categories.commitment
-    const commitment = job.categories?.commitment ?? null;
-
-    // Team / department from categories
-    const team = job.categories?.team ?? null;
+    // workFromHomeType: merge the workplaceType flag (e.g. hybrid) with anything
+    // inferred from the location text.
+    const workFromHomeType = this.mergeWorkFromHomeType(
+      parsedLocations.workFromHomeType,
+      this.workFromHomeTypeFromWorkplace(job.workplaceType),
+    );
 
     return new JobPostDto({
       id: `lever-${job.id}`,
@@ -224,78 +212,171 @@ export class LeverService implements IScraper {
       jobUrl: job.hostedUrl ?? `https://jobs.lever.co/${companySlug}/${job.id}`,
       location,
       description,
+      compensation: resolveCompensation({
+        structured: this.extractCompensation(job),
+        text: description,
+      }),
       datePosted: job.createdAt
         ? new Date(job.createdAt).toISOString().split('T')[0]
         : null,
       isRemote,
+      workFromHomeType,
       emails: extractEmails(description),
       site: Site.LEVER,
       // ATS-specific fields
       atsId: job.id ?? null,
       atsType: 'lever',
-      team,
-      employmentType: commitment,
+      department: job.categories?.department ?? null,
+      team: job.categories?.team ?? null,
+      employmentType: job.categories?.commitment ?? null,
       applyUrl: job.applyUrl ?? null,
     });
   }
 
-  private processJob(
-    job: LeverJob,
-    companySlug: string,
-    format?: DescriptionFormat,
-  ): JobPostDto | null {
-    const title = job.text;
-    if (!title) return null;
-
-    // Build description from available fields
-    let description =
-      job.descriptionPlain ?? job.descriptionBodyPlain ?? null;
-
-    if (!description && (job.description || job.descriptionBody)) {
-      const html = job.description ?? job.descriptionBody ?? '';
-      description = htmlToPlainText(html);
+  /**
+   * Ordered location labels for `parseLocationList`. Lever carries every site in
+   * `categories.allLocations`; fall back to the single `categories.location`.
+   */
+  private locationLabels(job: LeverJob): string[] {
+    const all = job.categories?.allLocations;
+    if (Array.isArray(all) && all.length > 0) {
+      return all.filter(
+        (label): label is string =>
+          typeof label === 'string' && label.trim().length > 0,
+      );
     }
+    const single = job.categories?.location;
+    return single ? [single] : [];
+  }
 
-    // Append additional/opening info if present
-    const additional = job.additionalPlain ?? null;
-    if (additional && description) {
-      description = `${description}\n\n${additional}`;
-    }
+  /**
+   * Fold Lever's ISO-2 `country` code into the parsed location when the parser
+   * did not already derive a country (e.g. non-US sites the US-only parser
+   * leaves bare). Uses the runtime CLDR table via `regionNameFromCode`.
+   */
+  private applyCountry(
+    location: LocationDto | null,
+    countryCode: string | null | undefined,
+  ): LocationDto | null {
+    const country = regionNameFromCode(countryCode);
+    if (!country) return location;
+    if (!location) return new LocationDto({ country });
+    if (location.country) return location;
+    return new LocationDto({ ...location, country });
+  }
 
-    // Location from categories
-    const locationStr = job.categories?.location ?? null;
-    const location = locationStr
-      ? new LocationDto({ city: locationStr })
-      : null;
+  private extractCompensation(job: LeverJob): CompensationDto | null {
+    const range = job.salaryRange;
+    if (!range) return null;
 
-    // Determine remote status
-    const isRemote =
-      job.workplaceType?.toLowerCase() === 'remote' ||
-      locationStr?.toLowerCase().includes('remote') ||
-      false;
+    const minAmount = typeof range.min === 'number' ? range.min : null;
+    const maxAmount = typeof range.max === 'number' ? range.max : null;
+    if (minAmount === null && maxAmount === null) return null;
 
-    // Employment type from categories.commitment
-    const commitment = job.categories?.commitment ?? null;
-
-    return new JobPostDto({
-      id: `lever-${job.id}`,
-      title,
-      companyName: companySlug,
-      jobUrl: job.hostedUrl ?? `https://jobs.lever.co/${companySlug}/${job.id}`,
-      location,
-      description,
-      datePosted: job.createdAt
-        ? new Date(job.createdAt).toISOString().split('T')[0]
-        : null,
-      isRemote,
-      emails: extractEmails(description),
-      site: Site.LEVER,
-      // ATS-specific fields
-      atsId: job.id ?? null,
-      atsType: 'lever',
-      team: job.categories?.team ?? null,
-      employmentType: commitment,
-      applyUrl: job.applyUrl ?? null,
+    return new CompensationDto({
+      interval: this.resolveInterval(range.interval) ?? undefined,
+      minAmount: minAmount ?? undefined,
+      maxAmount: maxAmount ?? undefined,
+      currency: range.currency ?? undefined,
     });
+  }
+
+  /**
+   * Lever pay-period tokens are `per-<unit>-<kind>` (e.g. `per-year-salary`,
+   * `per-hour-wage`, `per-month-salary`). Extract the unit and resolve it via
+   * the shared interval map so the real interval is honored (not coerced to
+   * yearly).
+   */
+  private resolveInterval(
+    raw: string | null | undefined,
+  ): CompensationInterval | null {
+    if (!raw) return null;
+    const match = /per-(year|hour|month|week|day)/i.exec(raw);
+    return getCompensationInterval(match?.[1] ?? raw);
+  }
+
+  private workFromHomeTypeFromWorkplace(
+    workplaceType: string | null | undefined,
+  ): string | null {
+    switch (workplaceType?.toLowerCase()) {
+      case 'hybrid':
+        return 'Hybrid';
+      case 'remote':
+        return 'Remote';
+      default:
+        return null;
+    }
+  }
+
+  private mergeWorkFromHomeType(
+    a: string | null,
+    b: string | null,
+  ): string | null {
+    if (!a) return b;
+    if (!b || a === b) return a;
+    return 'Hybrid or Remote';
+  }
+
+  private buildDescription(job: LeverJob): string | null {
+    const parts: string[] = [];
+
+    const combinedDescription = this.firstNonEmpty(
+      job.descriptionPlain,
+      job.description,
+    );
+
+    if (combinedDescription) {
+      parts.push(this.toPlainText(combinedDescription));
+    } else {
+      const opening = this.firstNonEmpty(job.openingPlain, job.opening);
+      const body = this.firstNonEmpty(
+        job.descriptionBodyPlain,
+        job.descriptionBody,
+      );
+      if (opening) parts.push(this.toPlainText(opening));
+      if (body) parts.push(this.toPlainText(body));
+    }
+
+    if (Array.isArray(job.lists)) {
+      for (const list of job.lists) {
+        const heading = this.firstNonEmpty(list.text);
+        const body = this.firstNonEmpty(list.content);
+        const listParts = [
+          heading ? this.toPlainText(heading) : null,
+          body ? this.toPlainText(body) : null,
+        ].filter((part): part is string => Boolean(part));
+
+        if (listParts.length > 0) {
+          parts.push(listParts.join('\n'));
+        }
+      }
+    }
+
+    const additional = this.firstNonEmpty(job.additionalPlain, job.additional);
+    if (additional) {
+      parts.push(this.toPlainText(additional));
+    }
+
+    const description = parts
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)
+      .join('\n\n');
+
+    return description || null;
+  }
+
+  private firstNonEmpty(...values: Array<string | null | undefined>): string | null {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  private toPlainText(value: string): string {
+    return value.includes('<') && value.includes('>')
+      ? htmlToPlainText(value)
+      : value.trim();
   }
 }

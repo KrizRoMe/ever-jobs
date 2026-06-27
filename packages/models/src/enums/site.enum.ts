@@ -60,6 +60,8 @@ export enum Site {
   OPENAI = 'openai',
   // Phase 6: New ATS integrations
   BREEZYHR = 'breezyhr',
+  // Generic schema.org JobPosting (JSON-LD) harvester — aggregator bucket, not an ATS.
+  JSONLD = 'jsonld',
   COMEET = 'comeet',
   PINPOINT = 'pinpoint',
   // Phase 7: Additional job boards
@@ -69,6 +71,8 @@ export enum Site {
   // Phase 8: ATS Expansion
   MANATAL = 'manatal',
   PAYLOCITY = 'paylocity',
+  // YC Work at a Startup — multi-tenant ATS (harvested via the YC mirror).
+  WORKATASTARTUP = 'workatastartup',
   FRESHTEAM = 'freshteam',
   BULLHORN = 'bullhorn',
   TRAKSTAR = 'trakstar',
@@ -690,6 +694,7 @@ export enum Site {
   AMYLYX = 'amylyx',
   // Phase 277: Spec 267 — Source Company Plugin: Anaplan
   ANAPLAN = 'anaplan',
+  ANATAR = 'anatar',
   // Phase 278: Spec 268 — Source Company Plugin: Anchanto
   ANCHANTO = 'anchanto',
   // Phase 279: Spec 269 — Source Company Plugin: Schwarzman Animal Medical Center
@@ -1701,6 +1706,38 @@ export enum Site {
   SLINGSHOT_AEROSPACE = 'slingshotaerospace',
   // Phase 782: Spec 786 — Source Company Plugin: Sound Agriculture
   SOUND_AGRICULTURE = 'soundagriculture',
+  // Phase 783: Spec 788 — Source Company Plugin: AIR COMPANY
+  AIR_COMPANY = 'aircompany',
+  // Phase 784: Spec 789 — Source Company Plugin: Arbor Energy
+  ARBOR_ENERGY = 'arborenergy',
+  // Phase 785: Spec 790 — Source Company Plugin: Aurora Innovation
+  AURORA_INNOVATION = 'aurorainnovation',
+  // Phase 786: Spec 791 — Source Company Plugin: EarnIn
+  EARNIN = 'earnin',
+  // Phase 787: Spec 792 — Source Company Plugin: Faraday Future
+  FARADAY_FUTURE = 'faradayfuture',
+  // Phase 788: Spec 793 — Source Company Plugin: FastSpring
+  FASTSPRING = 'fastspring',
+  // Phase 789: Spec 794 — Source Company Plugin: Gravity R&D
+  GRAVITY_R_D = 'gravity',
+  // Phase 790: Spec 795 — Source Company Plugin: Runwise
+  RUNWISE = 'runwise',
+  // Phase 791: Spec 796 — Source Company Plugin: SES AI
+  SES_AI = 'sesai',
+  // Phase 792: Spec 797 — Source Company Plugin: Solaris
+  SOLARIS = 'solarisbank',
+  // Phase 793: Spec 798 — Source Company Plugin: Stack AV
+  STACK_AV = 'stackav',
+  // Phase 794: Spec 799 — Source Company Plugin: tastytrade
+  TASTYTRADE = 'tastytrade',
+  // Phase 795: Spec 800 — Source Company Plugin: Torc Robotics
+  TORC_ROBOTICS = 'torcrobotics',
+  // Phase 796: Spec 801 — Source Company Plugin: Ursa Major
+  URSA_MAJOR = 'ursamajor',
+  // Phase 797: Spec 802 — Source Company Plugin: Via
+  VIA = 'via',
+  // Phase 798: Spec 803 — Source Company Plugin: Zuora
+  ZUORA = 'zuora',
 }
 
 /**

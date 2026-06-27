@@ -6,7 +6,6 @@ import {
   ScraperInputDto,
   JobResponseDto,
   JobPostDto,
-  LocationDto,
   CompensationDto,
   Site,
   DescriptionFormat,
@@ -17,6 +16,9 @@ import {
   HttpClient,
   htmlToPlainText,
   extractEmails,
+  parseLocationList,
+  resolveCompensation,
+  aggregateCompensation,
 } from '@ever-jobs/common';
 import {
   ASHBY_API_URL,
@@ -230,39 +232,82 @@ export class AshbyService implements IScraper {
       description = htmlToPlainText(job.descriptionHtml);
     }
 
-    // Location
-    const addr = job.address?.postalAddress;
-    const location = new LocationDto({
-      city: addr?.addressLocality ?? job.location ?? null,
-      state: addr?.addressRegion ?? null,
-      country: addr?.addressCountry ?? null,
+    const parsedLocations = parseLocationList(this.locationLabels(job));
+
+    // Compensation - structured tiers first, then fall back to parsing the
+    // job description (Spec 5018). Always parse a plain-text body so HTML mode
+    // does not feed tags to the salary matcher.
+    const salaryText =
+      job.descriptionPlain ??
+      (job.descriptionHtml ? htmlToPlainText(job.descriptionHtml) : null);
+    const compensation = resolveCompensation({
+      structured: this.extractCompensation(job),
+      text: salaryText,
     });
 
-    // Compensation - extract from the rich tier structure
-    const compensation = this.extractCompensation(job);
+    // The public job-board API and the authenticated Posting API disagree on
+    // these field names (publishedAt vs publishedDate, department vs
+    // departmentName, team vs teamName). Prefer the public name, fall back to
+    // the authenticated one so both paths populate.
+    const publishedRaw = job.publishedAt ?? job.publishedDate;
+    const datePosted = publishedRaw
+      ? new Date(publishedRaw).toISOString().split('T')[0]
+      : null;
 
     return new JobPostDto({
       id: `ashby-${job.id}`,
       title,
       companyName: companySlug,
       jobUrl: job.jobUrl ?? `https://jobs.ashbyhq.com/${companySlug}/${job.id}`,
-      location,
+      location: parsedLocations.location,
       description,
       compensation,
-      datePosted: job.publishedDate
-        ? new Date(job.publishedDate).toISOString().split('T')[0]
-        : null,
-      isRemote: job.isRemote ?? false,
+      datePosted,
+      isRemote: Boolean(job.isRemote) || parsedLocations.remoteMentioned,
+      workFromHomeType: parsedLocations.workFromHomeType,
       emails: extractEmails(description),
       site: Site.ASHBY,
       // ATS-specific fields
       atsId: job.id ?? null,
       atsType: 'ashby',
-      department: job.departmentName ?? null,
-      team: job.teamName ?? null,
+      department: job.department ?? job.departmentName ?? null,
+      team: job.team ?? job.teamName ?? null,
       employmentType: job.employmentType ?? null,
       applyUrl: job.applyUrl ?? null,
     });
+  }
+
+  private locationLabels(job: AshbyJob): string[] {
+    const labels: string[] = [];
+
+    const primaryAddress = this.postalAddressLabel(job.address);
+    if (primaryAddress) {
+      labels.push(primaryAddress);
+    } else if (job.location) {
+      labels.push(job.location);
+    }
+
+    for (const secondary of job.secondaryLocations ?? []) {
+      const secondaryAddress = this.postalAddressLabel(secondary?.address);
+      if (secondaryAddress) {
+        labels.push(secondaryAddress);
+      } else if (secondary?.location) {
+        labels.push(secondary.location);
+      }
+    }
+
+    return labels;
+  }
+
+  private postalAddressLabel(address: AshbyJob['address']): string | null {
+    const postal = address?.postalAddress;
+    if (!postal) return null;
+    const parts = [
+      postal.addressLocality,
+      postal.addressRegion,
+      postal.addressCountry,
+    ].filter((part): part is string => Boolean(part?.trim()));
+    return parts.length > 0 ? parts.join(', ') : null;
   }
 
   /**
@@ -304,18 +349,16 @@ export class AshbyService implements IScraper {
     const tiers = salaryComponent?.tiers ?? [];
     if (tiers.length === 0) return null;
 
-    // Use the first tier's floor/ceiling
-    const tier: AshbyCompensationTier = tiers[0];
-    if (tier.tierFloor == null && tier.tierCeiling == null) return null;
-
-    const interval = this.resolveInterval(tier.interval);
-
-    return new CompensationDto({
-      interval: interval ?? undefined,
-      minAmount: tier.tierFloor ?? undefined,
-      maxAmount: tier.tierCeiling ?? undefined,
-      currency: tier.currency ?? 'USD',
-    });
+    // Fold every tier (e.g. per-location/level bands) into the overall
+    // min-max envelope rather than reporting only the first (Spec 5019).
+    return aggregateCompensation(
+      tiers.map((tier: AshbyCompensationTier) => ({
+        minAmount: tier.tierFloor,
+        maxAmount: tier.tierCeiling,
+        currency: tier.currency ?? 'USD',
+        interval: this.resolveInterval(tier.interval),
+      })),
+    );
   }
 
   /** Flat shape: summaryComponents[] / compensationTiers[].components[]. */
@@ -336,24 +379,27 @@ export class AshbyService implements IScraper {
           c.compensationType?.toLowerCase() === 'base',
       ) ?? candidates[0];
 
-    const interval = this.resolveInterval(salaryComponent.interval);
+    // Fold every component sharing the chosen salary's type (e.g. per-location
+    // bands) into one overall min-max envelope; bonus/equity rows stay out
+    // since they carry a different compensationType (Spec 5019).
+    const salaryBands = candidates.filter(
+      (c) =>
+        (c.compensationType ?? null) ===
+        (salaryComponent.compensationType ?? null),
+    );
 
-    return new CompensationDto({
-      interval: interval ?? undefined,
-      minAmount: salaryComponent.minValue ?? undefined,
-      maxAmount: salaryComponent.maxValue ?? undefined,
-      currency: salaryComponent.currencyCode ?? 'USD',
-    });
+    return aggregateCompensation(
+      salaryBands.map((c) => ({
+        minAmount: c.minValue,
+        maxAmount: c.maxValue,
+        currency: c.currencyCode ?? 'USD',
+        interval: this.resolveInterval(c.interval),
+      })),
+    );
   }
 
-  /**
-   * Normalize a wire interval to a CompensationInterval. The flat shape
-   * prefixes a count (e.g. "1 YEAR", "1 HOUR") — strip it before resolving.
-   */
   private resolveInterval(raw: string | null | undefined) {
     if (!raw) return null;
-    const normalized = raw.trim().replace(/^\d+\s*/, '').toLowerCase();
-    if (!normalized) return null;
-    return getCompensationInterval(normalized);
+    return getCompensationInterval(raw);
   }
 }
