@@ -43,17 +43,17 @@ export class GetOnBoardService implements IScraper {
     });
     client.setHeaders(GETONBOARD_HEADERS);
 
-    const params: Record<string, string> = {
+    const params = new URLSearchParams({
       per_page: String(Math.min(resultsWanted, 50)),
       page: '1',
-    };
+    });
+    params.append('expand[]', 'company');
 
     if (input.searchTerm) {
-      params.query = input.searchTerm;
+      params.set('query', input.searchTerm);
     }
 
-    const queryString = new URLSearchParams(params).toString();
-    const url = `${GETONBOARD_API_URL}?${queryString}`;
+    const url = `${GETONBOARD_API_URL}?${params.toString()}`;
 
     this.logger.log(`Fetching Get on Board jobs: ${GETONBOARD_API_URL}?...`);
 
@@ -115,8 +115,11 @@ export class GetOnBoardService implements IScraper {
       });
     }
 
-    const cityStr = attrs.location_cities?.join(', ') ?? null;
-    const countryStr = attrs.countries?.join(', ') ?? null;
+    // API v0 changed location_cities to { data: [{id, type}] } — no city names in search response
+    const cityStr = Array.isArray(attrs.location_cities)
+      ? (attrs.location_cities as string[]).join(', ') || null
+      : null;
+    const countryStr = attrs.countries?.filter((c) => c !== 'Remote').join(', ') || null;
     const location = new LocationDto({
       city: cityStr,
       country: countryStr,
@@ -131,17 +134,21 @@ export class GetOnBoardService implements IScraper {
       }
     }
 
+    const companyAttrs = attrs.company?.data?.attributes;
+    const isRemote = attrs.remote === true || attrs.remote_modality === 'fully_remote';
+
     return new JobPostDto({
       id: `getonboard-${raw.id}`,
       title: attrs.title,
-      companyName: attrs.company ?? null,
-      companyLogo: attrs.logo ?? null,
+      companyName: companyAttrs?.name ?? null,
+      companyUrl: companyAttrs?.web ?? null,
+      companyLogo: companyAttrs?.logo ?? attrs.logo ?? null,
       jobUrl: raw.links.public_url,
       location,
       description,
       compensation,
       datePosted,
-      isRemote: attrs.remote ?? false,
+      isRemote,
       emails: extractEmails(description),
       site: Site.GETONBOARD,
     });
