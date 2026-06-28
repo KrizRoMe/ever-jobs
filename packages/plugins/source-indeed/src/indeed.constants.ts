@@ -8,7 +8,7 @@ import { JobType } from '@ever-jobs/models';
  * `indeed-app-info` header are mandatory — a desktop browser UA is rejected with
  * HTTP 403. The `indeed-api-key` must be current or the API responds with 401.
  *
- * `indeed-co` is injected per-request by the service (per country).
+ * `indeed-co` is injected per-request by the service (per country code).
  *
  * NOTE: the User-Agent is intentionally NOT set here — it must be passed through
  * the HttpClient constructor options so it overrides the client's default UA.
