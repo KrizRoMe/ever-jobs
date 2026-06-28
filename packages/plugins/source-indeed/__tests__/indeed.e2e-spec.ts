@@ -32,13 +32,15 @@ describe('IndeedService (E2E)', () => {
     const response = await service.scrape(input);
 
     expect(response).toBeDefined();
-    expect(response.jobs).toBeDefined();
     expect(Array.isArray(response.jobs)).toBe(true);
-    // We may get 0 results if blocked, but should not throw
-    if (response.jobs.length > 0) {
-      const job = response.jobs[0];
-      expect(job.title).toBeDefined();
-      expect(typeof job.title).toBe('string');
-    }
-  });
+    // A green run must prove the scraper is actually reaching Indeed.
+    // (A previously-permissive assertion masked a hard 403 from Cloudflare.)
+    expect(response.jobs.length).toBeGreaterThan(0);
+
+    const job = response.jobs[0];
+    expect(typeof job.title).toBe('string');
+    expect(job.title.length).toBeGreaterThan(0);
+    expect(job.jobUrl).toContain('indeed.com/viewjob?jk=');
+    expect(job.site).toBe(Site.INDEED);
+  }, 60000);
 });

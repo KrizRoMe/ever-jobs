@@ -21,7 +21,7 @@ import {
   extractEmails,
   randomSleep,
 } from '@ever-jobs/common';
-import { INDEED_HEADERS, JOB_SEARCH_QUERY } from './indeed.constants';
+import { INDEED_HEADERS, INDEED_USER_AGENT, buildJobSearchQuery } from './indeed.constants';
 import { getJobType, getCompensation, isJobRemote } from './indeed.utils';
 
 @SourcePlugin({
@@ -36,7 +36,9 @@ export class IndeedService implements IScraper {
   private readonly bandDelay = 5;
 
   async scrape(input: ScraperInputDto): Promise<JobResponseDto> {
-    const client = createHttpClient(input);
+    // The Indeed mobile-app User-Agent must be set as the client's single UA
+    // (via constructor options), not merged via setHeaders — see indeed.constants.
+    const client = createHttpClient({ ...input, userAgent: INDEED_USER_AGENT });
 
     const country = input.country ?? Country.USA;
     const { subdomain, apiCountryCode } = getIndeedDomain(country);
@@ -55,23 +57,24 @@ export class IndeedService implements IScraper {
       this.logger.log(`Fetching Indeed jobs, cursor: ${cursor ?? 'initial'}`);
 
       try {
-        const variables: any = {
-          what: input.searchTerm ?? '',
-          location: input.location ?? '',
-          radius: input.distance ?? 50,
-        };
-        if (cursor) variables.cursor = cursor;
-        if (input.hoursOld) variables.fromAge = String(Math.ceil(input.hoursOld / 24));
-
-        const filters: any[] = [];
-        if (input.jobType) filters.push({ name: 'jobtype', value: input.jobType });
-        if (input.isRemote) filters.push({ name: 'remotejob', value: 'true' });
-        if (filters.length > 0) variables.filters = filters;
-
-        const response = await client.post(apiUrl, {
-          query: JOB_SEARCH_QUERY,
-          variables,
+        const query = buildJobSearchQuery({
+          searchTerm: input.searchTerm,
+          location: input.location,
+          distance: input.distance,
+          cursor,
+          hoursOld: input.hoursOld,
+          jobType: input.jobType,
+          isRemote: input.isRemote,
         });
+
+        const response = await client.post(apiUrl, { query });
+
+        if (response.data?.errors) {
+          this.logger.warn(
+            `Indeed GraphQL errors: ${JSON.stringify(response.data.errors).slice(0, 300)}`,
+          );
+          break;
+        }
 
         const data = response.data?.data?.jobSearch;
         if (!data) {
@@ -119,25 +122,29 @@ export class IndeedService implements IScraper {
     const title = job.title;
     if (!title) return null;
 
-    const employer = job.employer ?? {};
-    const companyName = employer.name ?? null;
-    const companyUrl = employer.companyProfile?.pageUrl
-      ? `https://${subdomain}.indeed.com${employer.companyProfile.pageUrl}`
+    const employer = job.employer ?? null;
+    const dossier = employer?.dossier ?? null;
+    const employerDetails = dossier?.employerDetails ?? {};
+
+    const companyName = employer?.name ?? null;
+    const companyUrl = employer?.relativeCompanyPageUrl
+      ? `https://${subdomain}.indeed.com${employer.relativeCompanyPageUrl}`
       : null;
-    const companyLogo = employer.companyProfile?.images?.squareLogoUrl ?? null;
-    const bannerPhotoUrl = employer.companyProfile?.images?.bannerUrl ?? null;
-    const companyDescription = employer.companyProfile?.description ?? null;
-    const overview = employer.companyProfile?.overview ?? {};
-    const companyIndustry = overview.industryName ?? null;
-    const companyNumEmployees = overview.employeeCount?.toString() ?? null;
-    const companyRevenue = overview.revenue ?? null;
-    const companyAddresses = employer.companyProfile?.locations?.join(', ') ?? null;
+    const companyLogo = dossier?.images?.squareLogoUrl ?? null;
+    const bannerPhotoUrl = dossier?.images?.headerImageUrl ?? null;
+    const companyDescription = employerDetails.briefDescription ?? null;
+    const companyIndustry = employerDetails.industry
+      ? employerDetails.industry.replace(/Iv1/g, '').replace(/_/g, ' ').trim()
+      : null;
+    const companyNumEmployees = employerDetails.employeesLocalizedLabel ?? null;
+    const companyRevenue = employerDetails.revenueLocalizedLabel ?? null;
+    const companyAddresses = employerDetails.addresses?.[0] ?? null;
 
     const loc = job.location ?? {};
     const location = new LocationDto({
       city: loc.city ?? null,
-      state: loc.state ?? null,
-      country: loc.country ?? null,
+      state: loc.admin1Code ?? null,
+      country: loc.countryCode ?? null,
     });
 
     const rawDescription = job.description?.html ?? null;
@@ -152,7 +159,7 @@ export class IndeedService implements IScraper {
 
     const attributes = job.attributes ?? [];
     const jobType = getJobType(attributes);
-    const remote = isJobRemote(attributes);
+    const remote = isJobRemote(job, description);
     const comp = getCompensation(job.compensation);
     const compensation = comp
       ? new CompensationDto({
@@ -163,7 +170,7 @@ export class IndeedService implements IScraper {
         })
       : null;
 
-    const datePosted = job.datePublished ?? job.dateOnSite ?? null;
+    const datePosted = job.datePublished ?? job.dateOnIndeed ?? null;
 
     return new JobPostDto({
       id: `in-${job.key}`,
